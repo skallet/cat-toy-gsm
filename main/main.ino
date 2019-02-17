@@ -68,13 +68,13 @@ void loop() {
     if (strcmp(numberMemory, "+420*********") == 0) {
       if (!sendRun) {
         sendRun = 1;
-        Serial.println("Roztacim kolotoc");
+        Serial.println("Run rutine started");
       }
     }
   }
 
   if (sendRun) {
-    Serial.println("Tocim");
+    Serial.println("Power up toy..");
     digitalWrite(optoPin, HIGH);
     delay(100);
     digitalWrite(optoPin, LOW);
