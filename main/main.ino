@@ -11,16 +11,23 @@
 #define pinMotorB 12
 #define simSpeed 9600
 #define optoPin 11
+
+#define NUM_OF_MOVES 6
 #define STAY 0
 #define FORWARD 1
-#define BACKWARDS 2
+#define BACKWARD 2
+#define ATTENTION 3
+#define BAIT_FORWARD 4
+#define BAIT_BACKWARD 5
 
 char buffer[512];
 char numberMemory[16];
 int sendRun = 0;
-int runSeconds = 0;
-int timeLimit = 300;
+float runSeconds = 0;
+int timeLimit = 900;
 int currentDir = STAY;
+int currentSpeed = 0;
+int notChangeForSteps = 0;
 
 GPRS sim900(pinTX, pinRX, simSpeed);
 
@@ -46,34 +53,90 @@ void sendCmd(String s) {
 
 ISR(TIMER1_OVF_vect)         // timer compare interrupt service routine
 {
-  TCNT1 = 65536;            // preload timer
+  TCNT1 = 0;            // preload timer
   if (sendRun == 0) {
     digitalWrite(pinMotorA, LOW);
     digitalWrite(pinMotorB, LOW);
     runSeconds = 0;
   } else {
-    int prob = !currentDir ? 40 : 70;
-    if (random(100) > prob) {
+    int prob = 0;
+    switch (currentDir) {
+      case FORWARD:
+      case BACKWARD:
+      case ATTENTION:
+        prob = 60;
+      case BAIT_FORWARD:
+      case BAIT_BACKWARD:
+        prob = 50;
+      default:
+        prob = 30;
+    }
+    
+    if (!notChangeForSteps && random(101) > prob) {
       // change direction
       int prevDir = currentDir;
       while (prevDir == currentDir) {
-        currentDir = random(BACKWARDS + 1);
+        currentDir = random(NUM_OF_MOVES);
+        currentSpeed = random(86) + 170;
+
+        if (currentDir > BACKWARD) {
+          notChangeForSteps = 12;
+        } else {
+          notChangeForSteps = 0;
+        }
       }
     }
-    
-    runSeconds += 1;
 
+    Serial.print("STEP => Dir: ");
+    Serial.print(currentDir);
+    Serial.print("; seconds: ");
+    Serial.print(runSeconds);
+    Serial.print("; Speed: ");
+    Serial.println(currentSpeed);
     if (currentDir == STAY) {
       digitalWrite(pinMotorA, LOW);
       digitalWrite(pinMotorB, LOW);
     } else if (currentDir == FORWARD) {
-      digitalWrite(pinMotorA, HIGH);
+      analogWrite(pinMotorA, currentSpeed);
       digitalWrite(pinMotorB, LOW);
-    } else {
-      digitalWrite(pinMotorA, LOW);
+    } else if (currentDir == BACKWARD) {
+      analogWrite(pinMotorA, 256 - currentSpeed);
       digitalWrite(pinMotorB, HIGH);
+    } else if (currentDir == ATTENTION) {
+      if (notChangeForSteps % 2 == 0) {
+        digitalWrite(pinMotorA, HIGH);
+        digitalWrite(pinMotorB, LOW);
+      } else {
+        digitalWrite(pinMotorA, LOW);
+        digitalWrite(pinMotorB, HIGH);
+      }
+      TCNT1 = 56250;
+      runSeconds -= 0.9;
+    } else if (currentDir == BAIT_FORWARD) {
+      if (notChangeForSteps % 2 == 0) {
+        digitalWrite(pinMotorA, HIGH);
+        digitalWrite(pinMotorB, LOW);
+      } else {
+        digitalWrite(pinMotorA, LOW);
+        digitalWrite(pinMotorB, LOW);
+      }
+      TCNT1 = 56250;
+      runSeconds -= 0.9;
+    } else {
+      if (notChangeForSteps % 2 == 0) {
+        digitalWrite(pinMotorA, LOW);
+        digitalWrite(pinMotorB, HIGH);
+      } else {
+        digitalWrite(pinMotorA, LOW);
+        digitalWrite(pinMotorB, LOW);
+      }
+      TCNT1 = 56250;
+      runSeconds -= 0.9;
     }
 
+    runSeconds += 1;
+    notChangeForSteps = max(0, notChangeForSteps - 1);
+    
     if (runSeconds >= timeLimit) {
       Serial.println("Run rutine finished");
       sendRun = 0;
@@ -82,11 +145,12 @@ ISR(TIMER1_OVF_vect)         // timer compare interrupt service routine
 }
 
 void setup() {
+  randomSeed(analogRead(0));
   noInterrupts();
   TCCR1A = 0;
   TCCR1B = 0;
 
-  TCNT1 = 65536;            // preload timer 65536-16MHz/256/2Hz
+  TCNT1 = 0;            // preload timer 65536-16MHz/256/2Hz
   TCCR1B |= (1 << CS12);    // 256 prescaler 
   TIMSK1 |= (1 << TOIE1);   // enable timer overflow interrupt
   interrupts();
@@ -110,8 +174,10 @@ void setup() {
   Serial.println("Boot done!");
   sendCmd("AT+COLP=1\r\n");
   sendCmd("AT+COPS\r\n");
+  delay(1000);
   sendCmd("AT+CSQ\r\n");
   delay(1000);
+  //sendRun = 1;
 }
 
 void loop() {  
@@ -124,7 +190,10 @@ void loop() {
     sim900.hangup();
     Serial.println(numberMemory);
 
-    if (strcmp(numberMemory, "+420***") == 0) {
+    if (strcmp(numberMemory, "+*") == 0
+      || strcmp(numberMemory, "+*") == 0) {
+      // rebooting ending timer
+      runSeconds = 0;
       if (!sendRun) {
         sendRun = 1;
         Serial.println("Run rutine started");
